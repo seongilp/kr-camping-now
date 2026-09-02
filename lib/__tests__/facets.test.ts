@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { EMPTY_FILTERS, hasAnyFilter, matchesFilters, type Filters } from '../facets';
+import {
+  EMPTY_FILTERS,
+  INDUTY_COLOR,
+  hasAnyFilter,
+  indutyColorFor,
+  matchesFilters,
+  primaryInduty,
+  type Filters,
+} from '../facets';
 import type { Camp } from '../camps';
 
 function camp(over: Partial<Camp>): Camp {
@@ -77,6 +85,27 @@ describe('matchesFilters — 축 사이는 AND', () => {
     assert.equal(matchesFilters(both, filters), true);
     // 입지만 다르면 탈락
     assert.equal(matchesFilters(camp({ induty: ['글램핑'], lct: ['산'], animal: 'yes' }), filters), false);
+  });
+});
+
+describe('primaryInduty — 대표 업종 우선순위(글램핑>카라반>오토>일반)', () => {
+  it('단일 업종은 그대로', () => {
+    assert.equal(primaryInduty(['글램핑']), 'glamping');
+    assert.equal(primaryInduty(['자동차야영장']), 'auto');
+    assert.equal(primaryInduty(['일반야영장']), 'general');
+  });
+  it('복수 업종은 우선순위 앞선 것(희소한 특징이 이긴다)', () => {
+    assert.equal(primaryInduty(['일반야영장', '카라반']), 'caravan'); // 카라반 > 일반
+    assert.equal(primaryInduty(['일반야영장', '글램핑']), 'glamping'); // 글램핑 > 일반
+    assert.equal(primaryInduty(['카라반', '글램핑']), 'glamping'); // 글램핑 > 카라반
+    assert.equal(primaryInduty(['일반야영장', '자동차야영장']), 'auto'); // 오토 > 일반
+  });
+  it('업종 없으면 null → 중립색', () => {
+    assert.equal(primaryInduty([]), null);
+    assert.equal(indutyColorFor([]), INDUTY_COLOR.general);
+  });
+  it('indutyColorFor 는 대표 업종 색을 준다', () => {
+    assert.equal(indutyColorFor(['일반야영장', '글램핑']), INDUTY_COLOR.glamping);
   });
 });
 

@@ -9,10 +9,12 @@ import { SEOUL, haversineKm } from '@/lib/geo';
 import type { CampIndexItem, CampWithDistance, CampsResponse, MapBounds } from '@/lib/types';
 import {
   EMPTY_FILTERS,
+  INDUTY_COLOR,
   INDUTY_OPTIONS,
   LCT_OPTIONS,
   SIDO_OPTIONS,
   hasAnyFilter,
+  indutyColorFor,
   type Filters,
 } from '@/lib/facets';
 import { cn } from '@/lib/utils';
@@ -228,7 +230,14 @@ export function CampsBrowser() {
   );
 
   const points: MapPoint[] = useMemo(
-    () => mergedCamps.map((c) => ({ id: c.id, lon: c.lon, lat: c.lat, title: c.name })),
+    () =>
+      mergedCamps.map((c) => ({
+        id: c.id,
+        lon: c.lon,
+        lat: c.lat,
+        title: c.name,
+        color: indutyColorFor(c.induty), // 대표 업종 색(글램핑>카라반>오토>일반 우선순위)
+      })),
     [mergedCamps],
   );
 
@@ -412,6 +421,8 @@ export function CampsBrowser() {
               flyTo={flyTo}
             />
           )}
+          {/* 업종 색 범례. 좌하단(저작권은 우하단이라 안 겹침). 모바일에선 칩이 줄바꿈된다. */}
+          {hasEverLoaded && <MapLegend />}
           {/* 최초 로딩(아직 아무 데이터 없음) */}
           {!hasEverLoaded && data.kind !== 'error' && (
             <div className="flex size-full items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -554,6 +565,27 @@ export function CampsBrowser() {
 }
 
 /* ── 작은 UI 조각들 ───────────────────────────────────────────── */
+
+/** 지도 업종 색 범례. 핀 색이 뭘 뜻하는지 없으면 여전히 눌러 봐야 하므로 지도 위에 둔다. */
+function MapLegend() {
+  return (
+    <div className="absolute bottom-2 left-2 z-10 max-w-[calc(100%-1rem)] rounded-lg border border-border bg-card/90 px-2.5 py-1.5 text-[11px] shadow-sm backdrop-blur">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        {INDUTY_OPTIONS.map((o) => (
+          <span key={o.key} className="inline-flex items-center gap-1">
+            <span
+              className="size-2.5 shrink-0 rounded-full ring-1 ring-black/40"
+              style={{ background: INDUTY_COLOR[o.key] }}
+            />
+            <span className="text-muted-foreground">{o.label}</span>
+          </span>
+        ))}
+      </div>
+      {/* 카드엔 배지가 여럿인데 핀은 하나라 대표 하나로 칠한다는 걸 밝힌다(정직성). */}
+      <p className="mt-0.5 text-[10px] text-muted-foreground/70">복수 업종은 대표 하나로 표시</p>
+    </div>
+  );
+}
 
 function ChipRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (

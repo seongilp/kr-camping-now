@@ -23,13 +23,49 @@ export interface FacetOption {
   tokens: string[];
 }
 
-/** 업종(induty). 원문은 "일반야영장/자동차야영장/글램핑/카라반" 및 콤마 조합(실측). */
+/** 업종(induty). 원문은 "일반야영장/자동차야영장/글램핑/카라반" 및 콤마 조합(실측).
+ *  ★ 배열 순서 = 대표 업종 우선순위(앞이 이긴다). primaryInduty 가 이 순서를 그대로 쓴다. */
 export const INDUTY_OPTIONS: FacetOption[] = [
   { key: 'glamping', label: '글램핑', tokens: ['글램핑'] },
   { key: 'caravan', label: '카라반', tokens: ['카라반'] },
   { key: 'auto', label: '오토캠핑', tokens: ['자동차야영장'] },
   { key: 'general', label: '일반야영', tokens: ['일반야영장'] },
 ];
+
+/**
+ * 업종별 지도 핀·배지 색. **어두운 베이스맵(dark-matter) 위에서 넷이 구별되도록** 명도까지
+ * 벌린다. 색맹 안전: 빨강-초록 단독 대비를 피하고 명도 차를 함께 준다(글램핑=밝은 앰버, 카라반=바이올렛,
+ * 오토캠핑=에메랄드, 일반=중립 슬레이트). **내 위치 점(파랑 #3b82f6)과 겹치지 않게 네 색 모두 파랑 계열을
+ * 피한다.** 흔한 일반야영(2,291)은 중립색으로 두어, 희소·특징적인 글램핑/카라반/오토가 눈에 띄게 한다.
+ */
+export const INDUTY_COLOR: Record<string, string> = {
+  glamping: '#f59e0b', // 앰버(가장 밝음, 희소·특징적)
+  caravan: '#a855f7', // 바이올렛
+  auto: '#10b981', // 에메랄드
+  general: '#94a3b8', // 슬레이트(중립, 다수)
+};
+
+/** 업종 정보가 없거나 위 넷에 안 맞는 경우(희소). 중립 슬레이트로. */
+export const OTHER_INDUTY_COLOR = '#94a3b8';
+
+/**
+ * 여러 업종을 가진 캠핑장의 **대표 업종 key**. 우선순위 = INDUTY_OPTIONS 순서
+ * (글램핑 > 카라반 > 오토캠핑 > 일반야영). 없으면 null.
+ * 왜 우선순위인가: 핀은 하나뿐이라 색도 하나여야 한다. 희소한 특징(글램핑 381)이 다수(일반 2,291)에
+ * 묻히지 않게 앞선 것이 이긴다. (예: "일반야영장,카라반" → caravan.)
+ */
+export function primaryInduty(induty: string[]): string | null {
+  for (const o of INDUTY_OPTIONS) {
+    if (induty.some((v) => o.tokens.some((t) => v.includes(t)))) return o.key;
+  }
+  return null;
+}
+
+/** 캠핑장의 대표 업종 색(핀·카드 dot 공용). 대표 업종이 없으면 중립색. */
+export function indutyColorFor(induty: string[]): string {
+  const key = primaryInduty(induty);
+  return key ? INDUTY_COLOR[key] : OTHER_INDUTY_COLOR;
+}
 
 /** 입지(lctCl). 원문은 "산/숲/해변/계곡/강/섬/도심" 및 콤마 조합(실측). */
 export const LCT_OPTIONS: FacetOption[] = [

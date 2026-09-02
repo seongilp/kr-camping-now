@@ -13,8 +13,8 @@ import 'maplibre-gl/dist/maplibre-gl.css';
  * (메모리 기록). 좌표는 WGS84(lon,lat)를 API 가 직접 준다.
  *
  * 서버가 이미 가까운 ≤200건만 내려주므로(공간 필터) 클러스터링 없이 개별 마커로 찍는다.
- * 핀 색은 한 곳(primary)으로 통일한다 — 지도의 역할은 '위치'이고, 업종·입지 구분은 리스트
- * 카드의 배지와 좌측 필터가 맡는다(지도에 색을 여럿 쓰면 범례 없이는 오히려 헷갈린다).
+ * 핀 색은 **대표 업종(primaryInduty)** 색이다(글램핑/카라반/오토캠핑/일반). 색은 각 point.color 로
+ * 이미 계산돼 들어온다 — 지도는 그대로 칠하기만 한다(색·우선순위 규칙은 lib/facets 한 곳에).
  */
 
 export interface MapPoint {
@@ -22,6 +22,8 @@ export interface MapPoint {
   lon: number;
   lat: number;
   title: string;
+  /** 대표 업종 색(#hex). lib/facets indutyColorFor 로 계산돼 들어온다. */
+  color: string;
 }
 
 const BASEMAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
@@ -31,7 +33,6 @@ const KOREA_BOUNDS: [[number, number], [number, number]] = [
 ];
 const FIT_PADDING = { top: 40, right: 40, bottom: 40, left: 40 };
 const SOURCE = 'camps';
-const PIN_COLOR = '#3b82f6';
 
 function toGeoJson(points: MapPoint[]): GeoJSON.FeatureCollection {
   return {
@@ -39,7 +40,7 @@ function toGeoJson(points: MapPoint[]): GeoJSON.FeatureCollection {
     features: points.map((p) => ({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
-      properties: { id: p.id, title: p.title },
+      properties: { id: p.id, title: p.title, color: p.color },
     })),
   };
 }
@@ -138,8 +139,9 @@ export function CampsMap({
         source: SOURCE,
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 5, 15, 9],
-          'circle-color': PIN_COLOR,
-          'circle-opacity': 0.92,
+          'circle-color': ['get', 'color'],
+          'circle-opacity': 0.95,
+          // 어두운 베이스맵에서 각 색이 서로·배경과 분리되도록 진한 테두리.
           'circle-stroke-color': '#0b0f19',
           'circle-stroke-width': 1.5,
         },

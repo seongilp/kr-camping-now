@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 
 import type { CampWithDistance } from '@/lib/types';
+import { indutyColorFor } from '@/lib/facets';
 
 /** 사진 갤러리 로딩 상태(무한 로딩 금지, 실패/없음/성공을 구분). */
 type Gallery =
@@ -76,7 +77,15 @@ export function CampDetail({
       {/* 헤더 */}
       <div className="sticky top-0 z-10 flex items-start justify-between gap-2 border-b border-border bg-card/95 px-4 py-3 backdrop-blur">
         <div className="min-w-0">
-          <h2 className="truncate text-base font-bold">{camp.name}</h2>
+          <h2 className="flex min-w-0 items-center gap-1.5 text-base font-bold">
+            {/* 지도 핀과 같은 대표 업종 색 dot */}
+            <span
+              className="size-2.5 shrink-0 rounded-full ring-1 ring-black/30"
+              style={{ background: indutyColorFor(camp.induty) }}
+              aria-hidden
+            />
+            <span className="truncate">{camp.name}</span>
+          </h2>
           {camp.region && (
             <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
               <MapPin className="size-3 shrink-0" />
@@ -131,12 +140,17 @@ export function CampDetail({
 
         {/* 패싯 배지 */}
         <div className="flex flex-wrap gap-1.5">
+          {/* 업종 배지: 중립 알약 + 그 업종의 색 dot(핀·카드와 동일 색 체계). */}
           {camp.induty.map((t) => (
             <span
               key={`i-${t}`}
-              className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary"
+              className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground"
             >
-              <Tent className="size-3" />
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ background: indutyColorFor([t]) }}
+                aria-hidden
+              />
               {t}
             </span>
           ))}

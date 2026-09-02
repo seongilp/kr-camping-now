@@ -3,6 +3,7 @@
 import { Dog, MapPin, Sun, Tent } from 'lucide-react';
 
 import type { CampWithDistance } from '@/lib/types';
+import { indutyColorFor } from '@/lib/facets';
 import { cn } from '@/lib/utils';
 
 /**
@@ -26,6 +27,7 @@ export function CampCard({
 }) {
   const animalLabel =
     camp.animal === 'small' ? '소형견 동반' : camp.animal === 'yes' ? '반려동물 동반' : null;
+  const pinColor = indutyColorFor(camp.induty); // 지도 핀과 같은 대표 업종 색
 
   return (
     <button
@@ -62,7 +64,15 @@ export function CampCard({
       {/* 본문 */}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-baseline justify-between gap-2">
-          <h3 className="truncate text-sm font-semibold">{camp.name}</h3>
+          <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+            {/* 지도 핀과 같은 대표 업종 색 dot — 목록↔지도를 한눈에 잇는다. */}
+            <span
+              className="size-2 shrink-0 rounded-full ring-1 ring-black/30"
+              style={{ background: pinColor }}
+              aria-hidden
+            />
+            <span className="truncate">{camp.name}</span>
+          </h3>
           <span className="shrink-0 text-xs font-medium text-primary">
             {showDistance ? `${camp.distanceKm}km` : ''}
           </span>
@@ -76,12 +86,18 @@ export function CampCard({
         )}
 
         <div className="mt-0.5 flex flex-wrap gap-1">
+          {/* 업종 배지: 중립 알약 + 그 업종의 색 dot(핀 색 체계와 동일). 알록달록해지지 않게
+              색은 작은 dot 으로만 싣고, 채운 색 알약은 반려동물/연중에만 남긴다. */}
           {camp.induty.slice(0, 2).map((t) => (
             <span
               key={t}
-              className="inline-flex items-center gap-0.5 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+              className="inline-flex items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-secondary-foreground"
             >
-              <Tent className="size-2.5" />
+              <span
+                className="size-1.5 shrink-0 rounded-full"
+                style={{ background: indutyColorFor([t]) }}
+                aria-hidden
+              />
               {t}
             </span>
           ))}
