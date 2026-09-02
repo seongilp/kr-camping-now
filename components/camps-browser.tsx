@@ -1,12 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Dog, Loader2, MapPin, Sun, Tent } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, Dog, Loader2, MapPin, Search, Sun, Tent } from 'lucide-react';
 
 import type { LatLon } from '@/lib/geo';
-import { SEOUL } from '@/lib/geo';
-import type { CampWithDistance, CampsResponse } from '@/lib/types';
+import { SEOUL, haversineKm } from '@/lib/geo';
+import type { CampIndexItem, CampWithDistance, CampsResponse } from '@/lib/types';
 import {
   EMPTY_FILTERS,
   INDUTY_OPTIONS,
@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import { CampCard } from '@/components/camp-card';
 import { CampDetail } from '@/components/camp-detail';
 import { CampsMap, type MapPoint } from '@/components/camps-map';
+import { CommandPalette } from '@/components/command-palette';
 
 /** 위치 상태를 명확히 구분(무한 로딩 금지, F-6). */
 type GeoState =
@@ -38,6 +39,14 @@ export function CampsBrowser() {
   const [geo, setGeo] = useState<GeoState>({ kind: 'locating' });
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 커맨드 팔레트(⌘K) 상태.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [index, setIndex] = useState<CampIndexItem[] | null>(null);
+  const [indexLoading, setIndexLoading] = useState(false);
+  // 팔레트에서 고른, 가까운 200곳 '밖'의 캠핑장(단건 조회로 채운다). 지도·상세에 합류시킨다.
+  const [extraCamp, setExtraCamp] = useState<CampWithDistance | null>(null);
+  const paletteOpenRef = useRef(paletteOpen);
+  useEffect(() => void (paletteOpenRef.current = paletteOpen), [paletteOpen]);
 
   const hasRealLocation = geo.kind === 'granted';
   const origin: LatLon = geo.kind === 'granted' ? geo.at : SEOUL;
@@ -118,12 +127,81 @@ export function CampsBrowser() {
   const meta = data.kind === 'ready' ? data.data.meta : null;
   const usedFallback = meta?.usedFallback ?? !hasRealLocation;
 
-  const points: MapPoint[] = useMemo(
-    () => camps.map((c) => ({ id: c.id, lon: c.lon, lat: c.lat, title: c.name })),
-    [camps],
+  /* ⌘K / Ctrl+K: 팔레트 토글. 입력창에 포커스가 있어도 팔레트는 열어야 하므로 여기선 가드하지 않는다. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  /* ESC: 상세 카드 닫기(pet-travel 선례). 상세가 열렸을 때만 리스너를 붙인다.
+     - 팔레트가 위에 있으면(paletteOpen) 팔레트가 ESC 를 먼저 먹으므로 여기선 건드리지 않는다.
+     - 입력창(INPUT/TEXTAREA/contentEditable)에 포커스가 있으면 그쪽 동작을 우선한다. */
+  useEffect(() => {
+    if (!selectedId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || paletteOpenRef.current) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.isContentEditable) return;
+      setSelectedId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedId]);
+
+  /* 팔레트 최초 오픈 시 전국 이름 인덱스를 1회만 지연 로딩(검색은 이후 전부 클라이언트). */
+  useEffect(() => {
+    if (!paletteOpen || index || indexLoading) return;
+    setIndexLoading(true);
+    fetch('/api/camps/index')
+      .then((r) => (r.ok ? (r.json() as Promise<{ items: CampIndexItem[] }>) : Promise.reject()))
+      .then((j) => setIndex(j.items))
+      .catch(() => setIndex(null))
+      .finally(() => setIndexLoading(false));
+  }, [paletteOpen, index, indexLoading]);
+
+  /* 팔레트에서 캠핑장 선택.
+     - 이미 리스트(가까운 200곳)에 있으면 그대로 선택.
+     - 밖이면 단건 조회로 전체 정보를 받아 extraCamp 로 합류(지도·상세). 거리는 클라이언트에서 계산. */
+  const selectCampFromPalette = useCallback(
+    async (id: string) => {
+      setPaletteOpen(false);
+      if (camps.some((c) => c.id === id)) {
+        setExtraCamp(null);
+        setSelectedId(id);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/camps/${id}`);
+        if (!res.ok) return;
+        const { camp } = (await res.json()) as { camp: CampWithDistance };
+        const distanceKm = Math.round(haversineKm(origin, { lat: camp.lat, lon: camp.lon }) * 10) / 10;
+        setExtraCamp({ ...camp, distanceKm });
+        setSelectedId(id);
+      } catch {
+        // 단건 조회 실패는 조용히 무시(팔레트만 닫힘). 사용자가 다시 시도할 수 있다.
+      }
+    },
+    [camps, origin],
   );
 
-  const selected = camps.find((c) => c.id === selectedId) ?? null;
+  // 리스트 밖에서 고른 캠핑장(extraCamp)을 지도·상세에 합류시킨다(중복 제거).
+  const mergedCamps: CampWithDistance[] = useMemo(
+    () => (extraCamp && !camps.some((c) => c.id === extraCamp.id) ? [extraCamp, ...camps] : camps),
+    [camps, extraCamp],
+  );
+
+  const points: MapPoint[] = useMemo(
+    () => mergedCamps.map((c) => ({ id: c.id, lon: c.lon, lat: c.lat, title: c.name })),
+    [mergedCamps],
+  );
+
+  const selected = mergedCamps.find((c) => c.id === selectedId) ?? null;
   const center = origin;
 
   const indutyCount = (key: string) => counts?.induty.find((c) => c.key === key)?.count ?? 0;
@@ -137,11 +215,26 @@ export function CampsBrowser() {
           <Tent className="size-4 text-primary" />
           캠핑나우
         </Link>
-        {meta && (
-          <span className="text-[11px] text-muted-foreground">
-            전국 {meta.total.toLocaleString()}곳
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {meta && (
+            <span className="hidden text-[11px] text-muted-foreground sm:inline">
+              전국 {meta.total.toLocaleString()}곳
+            </span>
+          )}
+          {/* 검색/필터 팔레트 열기. 데스크톱은 ⌘K 힌트, 모바일은 버튼이 유일한 진입로. */}
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="flex items-center gap-2 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            aria-label="캠핑장 검색 및 필터 열기"
+          >
+            <Search className="size-3.5" />
+            <span className="hidden sm:inline">검색</span>
+            <kbd className="hidden rounded border border-border bg-muted px-1 font-sans text-[10px] sm:inline">
+              ⌘K
+            </kbd>
+          </button>
+        </div>
       </header>
 
       {/* 필터: 업종·입지 칩(가로 스크롤) + 반려동물·연중 토글 */}
@@ -226,8 +319,10 @@ export function CampsBrowser() {
         </div>
       )}
 
-      {/* 지도 첫 화면: 데스크톱은 좌우 분할(지도 우측 넓게), 모바일은 지도 위/리스트 아래 */}
-      <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col sm:flex-row-reverse">
+      {/* 지도 첫 화면: 데스크톱은 좌우 분할(목록 좌측 고정폭 + 지도 우측 전폭), 모바일은 지도 위/리스트 아래.
+          전폭(full-bleed) — 가운데 정렬 컨테이너를 두지 않는다. 헤더·필터 바와 같은 좌측 기준선(px-4)에
+          목록을 붙이고, 남는 폭은 전부 지도에 준다(초대형 화면에서 목록은 고정폭이라 안 늘어난다). */}
+      <div className="flex min-h-0 w-full flex-1 flex-col sm:flex-row-reverse">
         {/* 지도 */}
         <div className="relative h-[42dvh] w-full shrink-0 sm:h-auto sm:flex-1">
           {(data.kind === 'ready' || (data.kind === 'loading' && camps.length > 0)) && (
@@ -324,6 +419,17 @@ export function CampsBrowser() {
           <CampDetail camp={selected} usedFallback={usedFallback} onClose={() => setSelectedId(null)} />
         </div>
       )}
+
+      {/* 커맨드 팔레트(⌘K). 상세보다 위 레이어(z-50). 필터 상태를 부모와 공유. */}
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        index={index}
+        indexLoading={indexLoading}
+        filters={filters}
+        setFilters={setFilters}
+        onSelectCamp={selectCampFromPalette}
+      />
     </div>
   );
 }

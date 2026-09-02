@@ -11,6 +11,15 @@ export interface FacetCount {
   count: number;
 }
 
+/** 커맨드 팔레트 이름검색용 경량 인덱스 항목(전량, 검색·지도이동에 필요한 최소 필드). */
+export interface CampIndexItem {
+  id: string;
+  name: string;
+  region: string | null;
+  lat: number;
+  lon: number;
+}
+
 /** /api/camps 응답. */
 export interface CampsResponse {
   camps: CampWithDistance[];

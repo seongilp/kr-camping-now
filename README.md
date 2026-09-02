@@ -15,7 +15,10 @@
   - **반려동물 동반**(`animalCmgCl`): 가능/소형견만
   - **연중 운영**(`operPdCl`): 사계절 운영만
 - **상세**: 사진 갤러리(고캠핑 `imageList` lazy 로딩), 소개, 부대시설, 예약 방식, 주소·전화,
-  예약 링크·홈페이지·길찾기.
+  예약 링크·홈페이지·길찾기. **ESC** 로 닫는다(입력 포커스·팔레트가 위에 있으면 그쪽 우선).
+- **커맨드 팔레트(⌘K / Ctrl+K)**: 전국 3,100여 곳을 **이름·지역으로 검색**하고 필터를 명령으로 토글한다.
+  검색은 **전부 클라이언트**(경량 인덱스를 팔레트 첫 오픈 시 1회만 받음, 키 입력마다 서버를 안 때린다).
+  먼 캠핑장을 고르면 지도가 그리로 이동하고 상세가 열린다. 모바일엔 헤더의 검색 버튼이 진입로.
 
 ### 하지 않는 것 (정직성)
 
@@ -48,8 +51,11 @@ app/
   page.tsx                     랜딩(서버 컴포넌트, SEO)
   map/page.tsx                 앱 본체 → CampsBrowser
   api/camps/route.ts           ★ 서버 공간+패싯 필터(가까운 ≤200곳만 반환)
+  api/camps/index/route.ts     ⌘K 이름검색용 경량 인덱스(전량 id·이름·지역·좌표, 캐시 재사용)
+  api/camps/[id]/route.ts      단건 전체 정보(팔레트에서 리스트 밖 캠핑장 선택 시, 캐시 재사용)
   api/camps/[id]/images/route.ts  사진 갤러리(imageList, lazy)
   api/warm/route.ts            카탈로그 예열(cron, fail-closed)
+components/command-palette.tsx  ⌘K 팔레트(cmdk)
 lib/
   gocamping-api.ts             고캠핑 클라이언트(서버 전용, 키 verbatim)
   gocamping-cache.ts           모듈 캐시 + inflight(KST 자정 TTL)
