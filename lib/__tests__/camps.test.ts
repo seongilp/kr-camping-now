@@ -5,6 +5,7 @@ import {
   cleanText,
   itemsOf,
   normalize,
+  normalizeSido,
   parseAnimal,
   parseApiError,
   splitList,
@@ -100,6 +101,35 @@ describe('parseAnimal — 반려동물 정책(정보 없음과 불가를 구분)
     assert.equal(parseAnimal('불가능'), 'no');
     assert.equal(parseAnimal(''), 'unknown');
     assert.equal(parseAnimal(undefined), 'unknown');
+  });
+});
+
+describe('normalizeSido — 행정구역 개편으로 갈라진 표기를 하나로 합친다(실측 18종)', () => {
+  it('강원도 + 강원특별자치도 → gangwon (합치지 않으면 215곳이 샌다)', () => {
+    assert.equal(normalizeSido('강원도'), 'gangwon');
+    assert.equal(normalizeSido('강원특별자치도'), 'gangwon');
+  });
+  it('전라북도 + 전북특별자치도 → jeonbuk', () => {
+    assert.equal(normalizeSido('전라북도'), 'jeonbuk');
+    assert.equal(normalizeSido('전북특별자치도'), 'jeonbuk');
+  });
+  it('전남광주통합특별시 → jeonnam (묶음 값, 일반 광주/전남 규칙보다 먼저 잡힌다)', () => {
+    assert.equal(normalizeSido('전남광주통합특별시'), 'jeonnam');
+  });
+  it('광역시/특별시/도 표기를 표준 key 로', () => {
+    assert.equal(normalizeSido('경기도'), 'gyeonggi');
+    assert.equal(normalizeSido('경상남도'), 'gyeongnam');
+    assert.equal(normalizeSido('경상북도'), 'gyeongbuk');
+    assert.equal(normalizeSido('충청남도'), 'chungnam');
+    assert.equal(normalizeSido('충청북도'), 'chungbuk');
+    assert.equal(normalizeSido('인천광역시'), 'incheon');
+    assert.equal(normalizeSido('제주특별자치도'), 'jeju');
+    assert.equal(normalizeSido('세종특별자치시'), 'sejong');
+    assert.equal(normalizeSido('서울특별시'), 'seoul');
+  });
+  it('빈값은 null', () => {
+    assert.equal(normalizeSido(''), null);
+    assert.equal(normalizeSido(undefined), null);
   });
 });
 

@@ -49,6 +49,45 @@ export interface CampRaw {
 /** 반려동물 동반 구분. 값 정보가 없으면 'unknown'(="안 됨"이 아니다 — 정직하게 구분). */
 export type AnimalPolicy = 'yes' | 'small' | 'no' | 'unknown';
 
+/**
+ * 시도(도/광역시) 정규화. `doNm` 값이 행정구역 개편으로 지저분하다(실측 18종):
+ *   강원도 + 강원특별자치도 → 강원 / 전라북도 + 전북특별자치도 → 전북
+ *   전남광주통합특별시 → 전남·광주(데이터가 둘을 한 값으로 묶어 놓음, 분리 불가) 등.
+ * 합치지 않으면 "강원"을 골라도 215곳(강원특별자치도)이 빠진다. 아래 규칙으로 하나의 key 로 합친다.
+ *
+ * 반환: 표준 시도 key(영문). 매칭 실패 시 null(필터에 안 잡힘).
+ * 순서 주의 — '전남광주통합' 을 일반 '광주'/'전남' 규칙보다 먼저 본다.
+ */
+const SIDO_RULES: [test: (s: string) => boolean, key: string][] = [
+  [(s) => s.includes('전남광주'), 'jeonnam'], // 전남광주통합특별시(묶음 값)
+  [(s) => s.includes('경기'), 'gyeonggi'],
+  [(s) => s.includes('강원'), 'gangwon'],
+  [(s) => s.includes('경상남') || s === '경남', 'gyeongnam'],
+  [(s) => s.includes('경상북') || s === '경북', 'gyeongbuk'],
+  [(s) => s.includes('충청남') || s === '충남', 'chungnam'],
+  [(s) => s.includes('충청북') || s === '충북', 'chungbuk'],
+  [(s) => s.includes('전라북') || s.includes('전북'), 'jeonbuk'],
+  [(s) => s.includes('전라남') || s === '전남', 'jeonnam'],
+  [(s) => s.includes('인천'), 'incheon'],
+  [(s) => s.includes('제주'), 'jeju'],
+  [(s) => s.includes('대구'), 'daegu'],
+  [(s) => s.includes('울산'), 'ulsan'],
+  [(s) => s.includes('대전'), 'daejeon'],
+  [(s) => s.includes('세종'), 'sejong'],
+  [(s) => s.includes('서울'), 'seoul'],
+  [(s) => s.includes('부산'), 'busan'],
+  [(s) => s.includes('광주'), 'gwangju'], // 앞의 전남광주 규칙에서 안 걸린 순수 광주(향후 데이터 대비)
+];
+
+export function normalizeSido(doNm: string | undefined | null): string | null {
+  const s = doNm?.trim();
+  if (!s) return null;
+  for (const [test, key] of SIDO_RULES) {
+    if (test(s)) return key;
+  }
+  return null;
+}
+
 /** 클라이언트로 내보내는 정규화된 캠핑장. 좌표는 숫자, 목록형 필드는 배열. */
 export interface Camp {
   id: string;
@@ -57,6 +96,8 @@ export interface Camp {
   lineIntro: string | null;
   addr: string | null;
   region: string | null; // "경기도 연천군"
+  /** 정규화된 시도 key(강원도/강원특별자치도 등 표기 통합). 필터·집계용. */
+  sido: string | null;
   lat: number;
   lon: number;
   tel: string | null;
@@ -145,6 +186,7 @@ export function normalize(raw: CampRaw): Camp | null {
     lineIntro: cleanText(raw.lineIntro),
     addr,
     region,
+    sido: normalizeSido(raw.doNm),
     lat,
     lon,
     tel: raw.tel?.trim() || null,

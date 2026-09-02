@@ -4,6 +4,7 @@ import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
 import { useEffect, useRef } from 'react';
 
 import type { LatLon } from '@/lib/geo';
+import type { MapBounds } from '@/lib/types';
 
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -45,12 +46,22 @@ function toGeoJson(points: MapPoint[]): GeoJSON.FeatureCollection {
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
+/** 지도 이동 목적지(프로그램 이동). key 가 바뀔 때만 실제로 이동한다(사용자 조작과 안 싸우게). */
+export interface FlyTarget {
+  lat: number;
+  lon: number;
+  zoom: number;
+  key: number;
+}
+
 export function CampsMap({
   points,
   center,
   isUserLocation,
   selectedId,
   onSelect,
+  onUserMoveEnd,
+  flyTo,
 }: {
   points: MapPoint[];
   /** 지도 초기 중심. 실제 위치면 그 좌표, 폴백이면 서울. 항상 여기로 맞춘다(전국 축소 뷰 금지). */
@@ -59,18 +70,33 @@ export function CampsMap({
   isUserLocation: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** 사용자가 지도를 옮겨 멈췄을 때 그 화면 bounds 를 알린다(프로그램 이동은 제외). 브라우저가 디바운스. */
+  onUserMoveEnd?: (b: MapBounds) => void;
+  /** 프로그램 이동(⌘K 선택·시도 선택·"가장 가까운" 등). key 가 바뀔 때만 이동. */
+  flyTo?: FlyTarget | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const loadedRef = useRef(false);
   const fittedRef = useRef(false);
   const onSelectRef = useRef(onSelect);
+  const onUserMoveEndRef = useRef(onUserMoveEnd);
   const pointsRef = useRef(points);
   const centerRef = useRef(center);
+  const flyKeyRef = useRef<number | null>(null);
+  // 프로그램 이동(easeTo)이 유발한 moveend 를 사용자 조작으로 오인하지 않도록 잠깐 무시.
+  const programMoveRef = useRef(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => void (onSelectRef.current = onSelect), [onSelect]);
+  useEffect(() => void (onUserMoveEndRef.current = onUserMoveEnd), [onUserMoveEnd]);
   useEffect(() => void (pointsRef.current = points), [points]);
   useEffect(() => void (centerRef.current = center), [center]);
+
+  const readBounds = (map: MapLibreMap): MapBounds => {
+    const b = map.getBounds();
+    return { minLat: b.getSouth(), maxLat: b.getNorth(), minLon: b.getWest(), maxLon: b.getEast() };
+  };
 
   /* 지도 생성 — 한 번만. */
   useEffect(() => {
@@ -151,6 +177,20 @@ export function CampsMap({
       map.on('mouseleave', layer, () => void (map.getCanvas().style.cursor = ''));
     }
 
+    // 사용자가 지도를 옮겨 멈추면(e.originalEvent 有 = 드래그/휠 등 사용자 입력) 그 영역을 알린다.
+    // 프로그램 이동(easeTo)이 낸 moveend 는 originalEvent 가 없고 programMoveRef 로도 한 번 더 막는다.
+    map.on('moveend', (e) => {
+      const userGesture = !!(e as { originalEvent?: unknown }).originalEvent;
+      if (!userGesture || programMoveRef.current) {
+        programMoveRef.current = false;
+        return;
+      }
+      if (!onUserMoveEndRef.current) return;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      // 드래그 관성·연속 조작을 하나로 묶는다(250ms).
+      debounceRef.current = setTimeout(() => onUserMoveEndRef.current?.(readBounds(map)), 250);
+    });
+
     // 0x0 으로 생성되면 줌이 굳는다. 실제 크기를 얻은 뒤 한 번 더 맞춘다.
     const observer = new ResizeObserver((entries) => {
       const box = entries[0]?.contentRect;
@@ -167,12 +207,24 @@ export function CampsMap({
 
     return () => {
       observer.disconnect();
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       map.remove();
       mapRef.current = null;
       loadedRef.current = false;
       fittedRef.current = false;
     };
   }, []);
+
+  /* 프로그램 이동: flyTo.key 가 바뀔 때만 easeTo. 뒤이어 오는 moveend 를 programMoveRef 로 무시해
+     "지도가 스스로 움직였는데 그걸 사용자 조작으로 오인해 bounds 조회가 도는" 루프를 막는다. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !flyTo || flyKeyRef.current === flyTo.key) return;
+    flyKeyRef.current = flyTo.key;
+    programMoveRef.current = true;
+    fittedRef.current = true; // 초기 fit 로직과 안 겹치게
+    map.easeTo({ center: [flyTo.lon, flyTo.lat], zoom: flyTo.zoom, duration: 600 });
+  }, [flyTo]);
 
   /* 포인트 갱신. */
   useEffect(() => {

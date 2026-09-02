@@ -11,6 +11,7 @@ function camp(over: Partial<Camp>): Camp {
     lineIntro: null,
     addr: null,
     region: null,
+    sido: null,
     lat: 37.5,
     lon: 127,
     tel: null,
@@ -62,6 +63,12 @@ describe('matchesFilters — 축 사이는 AND', () => {
   it('연중: yearRound 만 통과', () => {
     assert.equal(matchesFilters(camp({ yearRound: true }), f({ yearRoundOnly: true })), true);
     assert.equal(matchesFilters(camp({ yearRound: false }), f({ yearRoundOnly: true })), false);
+  });
+
+  it('시도: 정규화 key 완전일치', () => {
+    assert.equal(matchesFilters(camp({ sido: 'gangwon' }), f({ sido: 'gangwon' })), true);
+    assert.equal(matchesFilters(camp({ sido: 'gyeonggi' }), f({ sido: 'gangwon' })), false);
+    assert.equal(matchesFilters(camp({ sido: null }), f({ sido: 'gangwon' })), false);
   });
 
   it('여러 축 AND: 글램핑 + 해변 + 반려동물 모두 만족해야 통과', () => {

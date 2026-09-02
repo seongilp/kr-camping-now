@@ -14,12 +14,13 @@ import { cn } from '@/lib/utils';
  */
 export function CampCard({
   camp,
-  usedFallback,
+  showDistance,
   selected,
   onSelect,
 }: {
   camp: CampWithDistance;
-  usedFallback: boolean;
+  /** 거리(km)를 보여줄지. 실제 내 위치 기준일 때만 true(영역·폴백·시도 기준 거리는 오해 소지). */
+  showDistance: boolean;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -63,7 +64,7 @@ export function CampCard({
         <div className="flex items-baseline justify-between gap-2">
           <h3 className="truncate text-sm font-semibold">{camp.name}</h3>
           <span className="shrink-0 text-xs font-medium text-primary">
-            {usedFallback ? '' : `${camp.distanceKm}km`}
+            {showDistance ? `${camp.distanceKm}km` : ''}
           </span>
         </div>
 

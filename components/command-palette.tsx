@@ -4,7 +4,7 @@ import { Command } from 'cmdk';
 import { useEffect, useMemo, useState } from 'react';
 import { Dog, Loader2, MapPin, Search, Sun, Tent } from 'lucide-react';
 
-import { INDUTY_OPTIONS, LCT_OPTIONS, type Filters } from '@/lib/facets';
+import { INDUTY_OPTIONS, LCT_OPTIONS, SIDO_OPTIONS, type Filters } from '@/lib/facets';
 import type { CampIndexItem } from '@/lib/types';
 
 /**
@@ -28,6 +28,7 @@ export function CommandPalette({
   indexLoading,
   filters,
   setFilters,
+  onToggleSido,
   onSelectCamp,
 }: {
   open: boolean;
@@ -36,6 +37,8 @@ export function CommandPalette({
   indexLoading: boolean;
   filters: Filters;
   setFilters: (updater: (f: Filters) => Filters) => void;
+  /** 시도 토글은 지도 이동·영역 해제 부수효과가 있어 부모 핸들러를 공유한다(상태 갈라짐 방지). */
+  onToggleSido: (key: string) => void;
   onSelectCamp: (id: string) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -152,6 +155,16 @@ export function CommandPalette({
                 >
                   연중(사계절) 운영만
                 </Item>
+                {SIDO_OPTIONS.map((o) => (
+                  <Item
+                    key={`s-${o.key}`}
+                    active={filters.sido === o.key}
+                    icon={<MapPin className="size-4" />}
+                    onSelect={() => onToggleSido(o.key)}
+                  >
+                    지역 · {o.label}
+                  </Item>
+                ))}
               </Command.Group>
             )}
 

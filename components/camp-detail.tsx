@@ -29,11 +29,12 @@ type Gallery =
  */
 export function CampDetail({
   camp,
-  usedFallback,
+  showDistance,
   onClose,
 }: {
   camp: CampWithDistance;
-  usedFallback: boolean;
+  /** 거리(km) 표시 여부(실제 내 위치 기준일 때만). */
+  showDistance: boolean;
   onClose: () => void;
 }) {
   const [gallery, setGallery] = useState<Gallery>({ kind: 'loading' });
@@ -80,7 +81,7 @@ export function CampDetail({
             <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
               <MapPin className="size-3 shrink-0" />
               {camp.region}
-              {!usedFallback && <span className="text-primary"> · {camp.distanceKm}km</span>}
+              {showDistance && <span className="text-primary"> · {camp.distanceKm}km</span>}
             </p>
           )}
         </div>

@@ -6,18 +6,19 @@ import { AlertCircle, Dog, Loader2, MapPin, Search, Sun, Tent } from 'lucide-rea
 
 import type { LatLon } from '@/lib/geo';
 import { SEOUL, haversineKm } from '@/lib/geo';
-import type { CampIndexItem, CampWithDistance, CampsResponse } from '@/lib/types';
+import type { CampIndexItem, CampWithDistance, CampsResponse, MapBounds } from '@/lib/types';
 import {
   EMPTY_FILTERS,
   INDUTY_OPTIONS,
   LCT_OPTIONS,
+  SIDO_OPTIONS,
   hasAnyFilter,
   type Filters,
 } from '@/lib/facets';
 import { cn } from '@/lib/utils';
 import { CampCard } from '@/components/camp-card';
 import { CampDetail } from '@/components/camp-detail';
-import { CampsMap, type MapPoint } from '@/components/camps-map';
+import { CampsMap, type FlyTarget, type MapPoint } from '@/components/camps-map';
 import { CommandPalette } from '@/components/command-palette';
 
 /** 위치 상태를 명확히 구분(무한 로딩 금지, F-6). */
@@ -36,6 +37,9 @@ type DataState =
 
 export function CampsBrowser() {
   const [data, setData] = useState<DataState>({ kind: 'loading' });
+  // 마지막으로 성공한 응답을 보존한다. 필터·영역이 바뀌어 재요청(loading)하는 동안에도 이전 결과를
+  // 계속 보여줘 **지도가 언마운트되지 않게** 한다(언마운트되면 다시 뜰 때 초기 위치로 튀어 flyTo 가 사라진다).
+  const [lastReady, setLastReady] = useState<CampsResponse | null>(null);
   const [geo, setGeo] = useState<GeoState>({ kind: 'locating' });
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -45,11 +49,22 @@ export function CampsBrowser() {
   const [indexLoading, setIndexLoading] = useState(false);
   // 팔레트에서 고른, 가까운 200곳 '밖'의 캠핑장(단건 조회로 채운다). 지도·상세에 합류시킨다.
   const [extraCamp, setExtraCamp] = useState<CampWithDistance | null>(null);
+  // 지도에 보이는 영역. 사용자가 지도를 옮기면 채워지고, 그 영역으로 서버 조회한다.
+  const [bounds, setBounds] = useState<MapBounds | null>(null);
+  // 프로그램 지도 이동(시도 선택·가장 가까운·내 위치 등). key 증가로만 실제 이동.
+  const [flyTo, setFlyTo] = useState<FlyTarget | null>(null);
+  const flyKeyRef = useRef(0);
   const paletteOpenRef = useRef(paletteOpen);
   useEffect(() => void (paletteOpenRef.current = paletteOpen), [paletteOpen]);
 
   const hasRealLocation = geo.kind === 'granted';
   const origin: LatLon = geo.kind === 'granted' ? geo.at : SEOUL;
+
+  /** 지도를 특정 지점으로 프로그램 이동(사용자 조작과 구분됨). */
+  const flyToPoint = useCallback((lat: number, lon: number, zoom: number) => {
+    flyKeyRef.current += 1;
+    setFlyTo({ lat, lon, zoom, key: flyKeyRef.current });
+  }, []);
 
   /* 위치. 지도 진입은 "내 주변"을 보겠다는 의도라 한 번 요청.
      거부/불가/미지원을 각각 다른 상태로 두고, 어느 경우든 서울로 폴백해 계속 동작한다. */
@@ -78,8 +93,12 @@ export function CampsBrowser() {
   const requestLocation = () => {
     setGeo({ kind: 'locating' });
     navigator.geolocation.getCurrentPosition(
-      (pos) =>
-        setGeo({ kind: 'granted', at: { lat: pos.coords.latitude, lon: pos.coords.longitude } }),
+      (pos) => {
+        const at = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        setGeo({ kind: 'granted', at });
+        setBounds(null); // '내 위치로' → 영역 조회 해제하고 내 주변으로 되돌린다
+        flyToPoint(at.lat, at.lon, 11);
+      },
       (err) => setGeo({ kind: err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable' }),
       { enableHighAccuracy: true, timeout: 10000 },
     );
@@ -92,12 +111,19 @@ export function CampsBrowser() {
     let alive = true;
     setData({ kind: 'loading' });
     const params = new URLSearchParams();
-    if (hasRealLocation) {
+    // 영역(사용자가 지도 이동) 우선 → 없으면 실제 위치 → 없으면 서울 폴백(서버 기본).
+    if (bounds) {
+      params.set('minLat', String(bounds.minLat));
+      params.set('maxLat', String(bounds.maxLat));
+      params.set('minLon', String(bounds.minLon));
+      params.set('maxLon', String(bounds.maxLon));
+    } else if (hasRealLocation) {
       params.set('lat', String(origin.lat));
       params.set('lon', String(origin.lon));
     }
     if (filters.induty) params.set('induty', filters.induty);
     if (filters.lct) params.set('lct', filters.lct);
+    if (filters.sido) params.set('sido', filters.sido);
     if (filters.animalOnly) params.set('animal', '1');
     if (filters.yearRoundOnly) params.set('yearRound', '1');
 
@@ -110,7 +136,9 @@ export function CampsBrowser() {
         return r.json() as Promise<CampsResponse>;
       })
       .then((json) => {
-        if (alive) setData({ kind: 'ready', data: json });
+        if (!alive) return;
+        setData({ kind: 'ready', data: json });
+        setLastReady(json); // 다음 로딩 동안 지도·리스트를 유지하기 위한 스냅샷
       })
       .catch((e: { code?: string }) => {
         if (alive) setData({ kind: 'error', code: e?.code });
@@ -118,14 +146,17 @@ export function CampsBrowser() {
     return () => {
       alive = false;
     };
-  }, [filters, hasRealLocation, origin.lat, origin.lon, geo.kind]);
+  }, [filters, bounds, hasRealLocation, origin.lat, origin.lon, geo.kind]);
 
   useEffect(() => load(), [load]);
 
-  const camps: CampWithDistance[] = data.kind === 'ready' ? data.data.camps : [];
-  const counts = data.kind === 'ready' ? data.data.counts : null;
-  const meta = data.kind === 'ready' ? data.data.meta : null;
-  const usedFallback = meta?.usedFallback ?? !hasRealLocation;
+  // 표시용 데이터는 "지금 준비된 것 또는 마지막 성공분". 로딩 중에도 이전 결과를 유지한다.
+  const shown = data.kind === 'ready' ? data.data : lastReady;
+  const camps: CampWithDistance[] = shown?.camps ?? [];
+  const counts = shown?.counts ?? null;
+  const meta = shown?.meta ?? null;
+  const isLoading = data.kind === 'loading';
+  const hasEverLoaded = shown !== null;
 
   /* ⌘K / Ctrl+K: 팔레트 토글. 입력창에 포커스가 있어도 팔레트는 열어야 하므로 여기선 가드하지 않는다. */
   useEffect(() => {
@@ -204,8 +235,42 @@ export function CampsBrowser() {
   const selected = mergedCamps.find((c) => c.id === selectedId) ?? null;
   const center = origin;
 
+  // 조회 모드: 서버가 확정해 준 mode 를 신뢰(없으면 클라이언트 추정).
+  const mode = meta?.mode ?? (bounds ? 'bounds' : hasRealLocation ? 'location' : 'fallback');
+  // 거리는 '내 실제 위치' 기준일 때만 의미 있다. 영역·폴백·시도 기준 거리는 오해를 부르므로 숨긴다.
+  const showDistance = mode === 'location';
+
   const indutyCount = (key: string) => counts?.induty.find((c) => c.key === key)?.count ?? 0;
   const lctCount = (key: string) => counts?.lct.find((c) => c.key === key)?.count ?? 0;
+  const sidoCount = (key: string) => counts?.sido.find((c) => c.key === key)?.count ?? 0;
+
+  /* 사용자가 지도를 옮겨 멈추면 그 영역으로 조회 전환(디바운스는 지도 컴포넌트가 함). */
+  const handleUserMoveEnd = useCallback((b: MapBounds) => setBounds(b), []);
+
+  /* 시도 선택/해제. 시도는 새 지역 의도라 영역(bounds)을 해제하고, 선택 시 그 지역으로 지도 이동.
+     팔레트·사이드바가 이 하나를 공유해 상태가 갈라지지 않게 한다. */
+  const toggleSido = useCallback(
+    (key: string) => {
+      // 부작용(지도 이동·영역 해제)은 setFilters 업데이터 '밖'에서 — 업데이터는 순수해야 한다
+      // (StrictMode 이중 호출 등에서 setState 를 그 안에 넣으면 누락된다).
+      const selecting = filters.sido !== key;
+      setFilters((f) => ({ ...f, sido: f.sido === key ? null : key }));
+      if (selecting) {
+        const opt = SIDO_OPTIONS.find((o) => o.key === key);
+        if (opt) {
+          setBounds(null);
+          flyToPoint(opt.center.lat, opt.center.lon, 9);
+        }
+      }
+    },
+    [filters.sido, flyToPoint],
+  );
+
+  /* "가장 가까운 곳으로": 영역 조회를 풀고 내 위치(없으면 서울)로 되돌린다. */
+  const resetToNearest = useCallback(() => {
+    setBounds(null);
+    flyToPoint(origin.lat, origin.lon, 11);
+  }, [origin.lat, origin.lon, flyToPoint]);
 
   return (
     <div className="flex h-dvh flex-col">
@@ -237,8 +302,17 @@ export function CampsBrowser() {
         </div>
       </header>
 
-      {/* 필터: 업종·입지 칩(가로 스크롤) + 반려동물·연중 토글 */}
+      {/* 필터: 지역(시도)·업종·입지 칩(가로 스크롤) + 반려동물·연중 토글 */}
       <div className="space-y-1.5 border-b border-border px-4 py-2">
+        <ChipRow label="지역">
+          {SIDO_OPTIONS.map((o) => (
+            <Chip key={o.key} active={filters.sido === o.key} onClick={() => toggleSido(o.key)}>
+              {o.label}
+              {counts && <Count>{sidoCount(o.key)}</Count>}
+            </Chip>
+          ))}
+        </ChipRow>
+
         <ChipRow label="업종">
           {INDUTY_OPTIONS.map((o) => (
             <Chip
@@ -325,22 +399,35 @@ export function CampsBrowser() {
       <div className="flex min-h-0 w-full flex-1 flex-col sm:flex-row-reverse">
         {/* 지도 */}
         <div className="relative h-[42dvh] w-full shrink-0 sm:h-auto sm:flex-1">
-          {(data.kind === 'ready' || (data.kind === 'loading' && camps.length > 0)) && (
+          {/* 한 번이라도 로드되면 지도를 계속 마운트해 둔다. 재요청 중 언마운트하면 다시 뜰 때
+              초기 위치로 튀어 flyTo(시도 선택·영역 이동)가 사라진다. */}
+          {hasEverLoaded && (
             <CampsMap
               points={points}
               center={center}
               isUserLocation={hasRealLocation}
               selectedId={selectedId}
               onSelect={setSelectedId}
+              onUserMoveEnd={handleUserMoveEnd}
+              flyTo={flyTo}
             />
           )}
-          {data.kind === 'loading' && camps.length === 0 && (
+          {/* 최초 로딩(아직 아무 데이터 없음) */}
+          {!hasEverLoaded && data.kind !== 'error' && (
             <div className="flex size-full items-center justify-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
               {geo.kind === 'locating' ? '내 위치 확인 중…' : '캠핑장 불러오는 중…'}
             </div>
           )}
-          {data.kind === 'error' && (
+          {/* 재요청 중(이전 결과는 유지)엔 작은 오버레이만 */}
+          {hasEverLoaded && isLoading && (
+            <div className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card/90 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+              <Loader2 className="size-3.5 animate-spin" />
+              불러오는 중…
+            </div>
+          )}
+          {/* 첫 로드 실패(보여줄 이전 데이터가 없을 때만 전면 에러) */}
+          {!hasEverLoaded && data.kind === 'error' && (
             <div className="flex size-full flex-col items-center justify-center gap-2 p-6 text-center text-sm">
               <AlertCircle className="size-6 text-destructive" />
               <p className="text-muted-foreground">지금 캠핑장 정보를 불러오지 못했습니다.</p>
@@ -358,46 +445,77 @@ export function CampsBrowser() {
         {/* 리스트 */}
         <div className="flex min-h-0 flex-1 flex-col sm:w-[26rem] sm:flex-none sm:border-r sm:border-border">
           <div className="flex items-baseline justify-between px-4 py-2 text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">주변 캠핑장</span>
-            {data.kind === 'ready' && (
+            {/* 헤더 문구를 모드에 맞춘다: 지도를 옮겼으면 "이 지도 영역". */}
+            <span className="font-medium text-foreground">
+              {mode === 'bounds' ? '이 지도 영역' : '주변 캠핑장'}
+            </span>
+            {shown && (
               <span>
-                {camps.length}곳{hasRealLocation ? ' · 가까운 순' : ' · 서울 기준'}
+                {camps.length}곳
+                {mode === 'location'
+                  ? ' · 가까운 순'
+                  : mode === 'bounds'
+                    ? ' · 이 영역'
+                    : ' · 서울 기준'}
               </span>
             )}
           </div>
 
           {/* 잘림 안내: matched > returned 면 "가장 가까운 N곳만" 임을 정직하게 알린다. */}
-          {data.kind === 'ready' && meta?.truncated && (
+          {meta?.truncated && (
             <p className="px-4 pb-1 text-[11px] text-muted-foreground">
-              조건에 맞는 {meta.matched.toLocaleString()}곳 중 가까운 {camps.length}곳
+              {mode === 'bounds' ? '이 영역' : '조건'}에 맞는 {meta.matched.toLocaleString()}곳 중
+              {mode === 'bounds' ? ' 가까운' : ' 가까운'} {camps.length}곳
             </p>
           )}
 
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 pb-4">
-            {data.kind === 'ready' && camps.length === 0 && (
+            {hasEverLoaded && !isLoading && camps.length === 0 && (
               <div className="flex flex-col items-center gap-2 py-12 text-center">
                 <Tent className="size-8 text-muted-foreground/50" />
+                {/* 0곳: 필터 때문인지 / 원래 없는 영역인지 구분해 안내(정직성). */}
                 <p className="text-sm font-medium">
-                  {hasAnyFilter(filters)
-                    ? '이 조건에 맞는 캠핑장이 주변에 없습니다.'
-                    : '주변에 캠핑장이 없습니다.'}
+                  {mode === 'bounds'
+                    ? hasAnyFilter(filters)
+                      ? '이 지도 영역에는 조건에 맞는 캠핑장이 없습니다.'
+                      : '이 지도 영역에는 캠핑장이 없습니다.'
+                    : hasAnyFilter(filters)
+                      ? '이 조건에 맞는 캠핑장이 없습니다.'
+                      : '주변에 캠핑장이 없습니다.'}
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  {hasAnyFilter(filters) ? '필터를 줄이거나 초기화해 보세요.' : '지도를 움직여 보세요.'}
-                </p>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {mode === 'bounds' && (
+                    <button
+                      type="button"
+                      onClick={resetToNearest}
+                      className="rounded-full border border-border px-3 py-1 text-xs hover:bg-accent"
+                    >
+                      가장 가까운 곳으로
+                    </button>
+                  )}
+                  {hasAnyFilter(filters) && (
+                    <button
+                      type="button"
+                      onClick={() => setFilters(EMPTY_FILTERS)}
+                      className="rounded-full border border-border px-3 py-1 text-xs hover:bg-accent"
+                    >
+                      필터 초기화
+                    </button>
+                  )}
+                </div>
               </div>
             )}
             {camps.map((c) => (
               <CampCard
                 key={c.id}
                 camp={c}
-                usedFallback={usedFallback}
+                showDistance={showDistance}
                 selected={c.id === selectedId}
                 onSelect={() => setSelectedId(c.id)}
               />
             ))}
-            {data.kind === 'loading' &&
-              camps.length === 0 &&
+            {!hasEverLoaded &&
+              isLoading &&
               geo.kind !== 'locating' &&
               Array.from({ length: 6 }).map((_, i) => (
                 <div key={i} className="h-[92px] animate-pulse rounded-xl bg-muted" />
@@ -405,7 +523,7 @@ export function CampsBrowser() {
           </div>
 
           {/* 좌표 없는 캠핑장 정직 고지(지도에 못 찍음). 실측 좌표 채움률 99.7%라 극소수. */}
-          {data.kind === 'ready' && meta && meta.noCoords > 0 && (
+          {meta && meta.noCoords > 0 && (
             <p className="border-t border-border px-4 py-1.5 text-[11px] text-muted-foreground">
               좌표가 제공되지 않아 지도에 표시하지 못한 캠핑장 {meta.noCoords}곳은 목록에서 제외됩니다.
             </p>
@@ -416,7 +534,7 @@ export function CampsBrowser() {
       {/* 상세 시트 */}
       {selected && (
         <div className="fixed inset-x-0 bottom-0 z-20 sm:inset-auto sm:bottom-4 sm:right-4 sm:w-[26rem]">
-          <CampDetail camp={selected} usedFallback={usedFallback} onClose={() => setSelectedId(null)} />
+          <CampDetail camp={selected} showDistance={showDistance} onClose={() => setSelectedId(null)} />
         </div>
       )}
 
@@ -428,6 +546,7 @@ export function CampsBrowser() {
         indexLoading={indexLoading}
         filters={filters}
         setFilters={setFilters}
+        onToggleSido={toggleSido}
         onSelectCamp={selectCampFromPalette}
       />
     </div>
