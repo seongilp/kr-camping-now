@@ -22,6 +22,8 @@ export const metadata: Metadata = {
   description:
     '전국 3,100여 개 캠핑장을 지도에서. 글램핑·카라반·오토캠핑, 해변·계곡·숲, 반려동물 동반, 연중 운영까지 조건으로 걸러 내 주변부터 찾아보세요. 한국관광공사 고캠핑 공식 데이터.',
   keywords: ['캠핑장', '글램핑', '카라반', '오토캠핑', '반려동물 캠핑', '캠핑장 지도', '고캠핑'],
+  applicationName: '캠핑나우',
+  appleWebApp: { title: '캠핑나우' },
   alternates: { canonical: SITE },
   openGraph: {
     title: '캠핑나우 — 내 주변 캠핑장 지도',
