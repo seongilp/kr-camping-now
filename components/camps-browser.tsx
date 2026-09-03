@@ -187,21 +187,34 @@ export function CampsBrowser() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedId]);
 
-  /* 팔레트 최초 오픈 시 전국 이름 인덱스를 1회만 지연 로딩(검색은 이후 전부 클라이언트). */
+  /* 전국 인덱스를 **마운트 후 한 번**만 지연 로딩(idle 콜백 — 초기 렌더·지도 로딩과 안 겹치게).
+     예전엔 팔레트 최초 오픈 시였지만, 이제 지도 전국 배경층(camps-all)도 이 인덱스를 쓰므로
+     팔레트를 열지 않는 사용자도 전국 분포를 보려면 필요하다. 실패하면 조용히 null(기존 동작
+     유지 — 팔레트는 검색 불가 안내, 지도는 배경층 없이 근접 200곳만 그대로 보여준다). */
   useEffect(() => {
-    if (!paletteOpen || index || indexLoading) return;
+    if (index || indexLoading) return;
     setIndexLoading(true);
-    fetch('/api/camps/index')
-      .then((r) => (r.ok ? (r.json() as Promise<{ items: CampIndexItem[] }>) : Promise.reject()))
-      .then((j) => setIndex(j.items))
-      .catch(() => setIndex(null))
-      .finally(() => setIndexLoading(false));
-  }, [paletteOpen, index, indexLoading]);
+    const load = () => {
+      fetch('/api/camps/index')
+        .then((r) => (r.ok ? (r.json() as Promise<{ items: CampIndexItem[] }>) : Promise.reject()))
+        .then((j) => setIndex(j.items))
+        .catch(() => setIndex(null))
+        .finally(() => setIndexLoading(false));
+    };
+    // requestIdleCallback 이 없는 환경(Safari 등)은 setTimeout(0)으로 대체.
+    const ric = (window as typeof window & { requestIdleCallback?: (cb: () => void) => number })
+      .requestIdleCallback;
+    if (ric) ric(load);
+    else setTimeout(load, 0);
+    // index/indexLoading 을 의존성에 넣지 않는다 — 마운트 시 1회만 실행하려는 의도(재요청 방지는
+    // 위 가드로 이미 충분하고, 의존성에 넣으면 setIndexLoading(true) 자체가 재실행을 유발한다).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  /* 팔레트에서 캠핑장 선택.
+  /* 캠핑장 id 로 선택(팔레트 검색 결과 클릭 + 지도 전국 배경층 클릭이 공유).
      - 이미 리스트(가까운 200곳)에 있으면 그대로 선택.
      - 밖이면 단건 조회로 전체 정보를 받아 extraCamp 로 합류(지도·상세). 거리는 클라이언트에서 계산. */
-  const selectCampFromPalette = useCallback(
+  const selectCampById = useCallback(
     async (id: string) => {
       setPaletteOpen(false);
       if (camps.some((c) => c.id === id)) {
@@ -239,6 +252,15 @@ export function CampsBrowser() {
         color: indutyColorFor(c.induty), // 대표 업종 색(글램핑>카라반>오토>일반 우선순위)
       })),
     [mergedCamps],
+  );
+
+  // 전국 배경층용 포인트. 인덱스가 아직 없으면(로딩 중·실패) null → 지도는 배경층 없이 근접 200곳만.
+  // color 는 인덱스 응답에 이미 계산돼 들어있다(toIndexItem, lib/camp-index.ts).
+  const allPoints: MapPoint[] | null = useMemo(
+    () =>
+      index?.map((c) => ({ id: c.id, lon: c.lon, lat: c.lat, title: c.name, color: c.color })) ??
+      null,
+    [index],
   );
 
   const selected = mergedCamps.find((c) => c.id === selectedId) ?? null;
@@ -413,10 +435,12 @@ export function CampsBrowser() {
           {hasEverLoaded && (
             <CampsMap
               points={points}
+              allPoints={allPoints}
               center={center}
               isUserLocation={hasRealLocation}
               selectedId={selectedId}
               onSelect={setSelectedId}
+              onSelectFromAll={selectCampById}
               onUserMoveEnd={handleUserMoveEnd}
               flyTo={flyTo}
             />
@@ -558,7 +582,7 @@ export function CampsBrowser() {
         filters={filters}
         setFilters={setFilters}
         onToggleSido={toggleSido}
-        onSelectCamp={selectCampFromPalette}
+        onSelectCamp={selectCampById}
       />
     </div>
   );

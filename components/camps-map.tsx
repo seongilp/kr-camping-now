@@ -12,7 +12,16 @@ import 'maplibre-gl/dist/maplibre-gl.css';
  * 캠핑장 지도. MapLibre **v5** — v6 는 Turbopack 에서 워커 로딩이 실패해 지도가 조용히 안 뜬다
  * (메모리 기록). 좌표는 WGS84(lon,lat)를 API 가 직접 준다.
  *
- * 서버가 이미 가까운 ≤200건만 내려주므로(공간 필터) 클러스터링 없이 개별 마커로 찍는다.
+ * 두 레이어로 나뉜다:
+ *  - **전국 배경층(camps-all)**: 전국 인덱스 전량(≈3,099)을 작고 흐린 원으로 깐다. bounds 조회는
+ *    화면 중심 기준 가까운 ≤200건만 내려주므로(lib/geo.ts nearest), 그 배경이 없으면 전국 줌에서
+ *    캠핑장이 화면 중심 근처에만 몰려 보이는 착시가 생긴다(실측 버그). 클러스터링은 불필요 —
+ *    원 3천 개는 가볍다.
+ *  - **근접 강조층(camps)**: 서버가 지금 화면·위치 기준으로 골라준 가까운 ≤200건. 배경층 위에
+ *    또렷하게(불투명 + 큰 반경 + 테두리) 그려 "지금 리스트에 있는 곳"을 구분해 준다.
+ * 클릭은 근접층을 먼저 잡는다(레이어 배열 순서 = 클릭 우선순위, 나중에 add 된 게 위·먼저 히트).
+ * 배경층만 있는 지점을 클릭하면 리스트에 없을 수 있어 onSelectFromAll(단건 조회 합류 경로)로 보낸다.
+ *
  * 핀 색은 **대표 업종(primaryInduty)** 색이다(글램핑/카라반/오토캠핑/일반). 색은 각 point.color 로
  * 이미 계산돼 들어온다 — 지도는 그대로 칠하기만 한다(색·우선순위 규칙은 lib/facets 한 곳에).
  */
@@ -46,6 +55,7 @@ function toGeoJson(points: MapPoint[]): GeoJSON.FeatureCollection {
 }
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+const SOURCE_ALL = 'camps-all';
 
 /** 지도 이동 목적지(프로그램 이동). key 가 바뀔 때만 실제로 이동한다(사용자 조작과 안 싸우게). */
 export interface FlyTarget {
@@ -57,20 +67,26 @@ export interface FlyTarget {
 
 export function CampsMap({
   points,
+  allPoints,
   center,
   isUserLocation,
   selectedId,
   onSelect,
+  onSelectFromAll,
   onUserMoveEnd,
   flyTo,
 }: {
   points: MapPoint[];
+  /** 전국 배경층. 인덱스 로딩 전·실패 시 null(그동안은 근접 200곳만 보인다 — 기존 동작). */
+  allPoints?: MapPoint[] | null;
   /** 지도 초기 중심. 실제 위치면 그 좌표, 폴백이면 서울. 항상 여기로 맞춘다(전국 축소 뷰 금지). */
   center: LatLon;
   /** center 가 사용자의 실제 위치인가. true 일 때만 파란 '내 위치' 점을 찍는다(폴백은 안 찍음). */
   isUserLocation: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** 배경층(camps-all) 클릭. 근접 200곳 밖일 수 있어 단건 조회 합류 경로로 보낸다. 없으면 onSelect. */
+  onSelectFromAll?: (id: string) => void;
   /** 사용자가 지도를 옮겨 멈췄을 때 그 화면 bounds 를 알린다(프로그램 이동은 제외). 브라우저가 디바운스. */
   onUserMoveEnd?: (b: MapBounds) => void;
   /** 프로그램 이동(⌘K 선택·시도 선택·"가장 가까운" 등). key 가 바뀔 때만 이동. */
@@ -81,8 +97,10 @@ export function CampsMap({
   const loadedRef = useRef(false);
   const fittedRef = useRef(false);
   const onSelectRef = useRef(onSelect);
+  const onSelectFromAllRef = useRef(onSelectFromAll);
   const onUserMoveEndRef = useRef(onUserMoveEnd);
   const pointsRef = useRef(points);
+  const allPointsRef = useRef(allPoints);
   const centerRef = useRef(center);
   const flyKeyRef = useRef<number | null>(null);
   // 프로그램 이동(easeTo)이 유발한 moveend 를 사용자 조작으로 오인하지 않도록 잠깐 무시.
@@ -90,8 +108,10 @@ export function CampsMap({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => void (onSelectRef.current = onSelect), [onSelect]);
+  useEffect(() => void (onSelectFromAllRef.current = onSelectFromAll), [onSelectFromAll]);
   useEffect(() => void (onUserMoveEndRef.current = onUserMoveEnd), [onUserMoveEnd]);
   useEffect(() => void (pointsRef.current = points), [points]);
+  useEffect(() => void (allPointsRef.current = allPoints), [allPoints]);
   useEffect(() => void (centerRef.current = center), [center]);
 
   const readBounds = (map: MapLibreMap): MapBounds => {
@@ -119,6 +139,21 @@ export function CampsMap({
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
     map.on('load', () => {
+      // 전국 배경층 — 먼저 add 해 근접 강조층 '아래'에 깔리게 한다(add 순서 = 렌더 순서).
+      map.addSource(SOURCE_ALL, { type: 'geojson', data: toGeoJson(allPointsRef.current ?? []) });
+      map.addLayer({
+        id: 'camps-all-point',
+        type: 'circle',
+        source: SOURCE_ALL,
+        paint: {
+          // 근접층(circle-radius 5~9)보다 뚜렷이 작게 — "여기도 있다"는 배경 정보일 뿐, 강조는 근접층 몫.
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 2, 10, 4],
+          'circle-color': ['get', 'color'],
+          'circle-opacity': 0.55,
+          // 테두리 없음(근접층과의 시각적 위계 차이를 명확히).
+        },
+      });
+
       map.addSource(SOURCE, { type: 'geojson', data: toGeoJson(pointsRef.current) });
 
       map.addLayer({
@@ -138,12 +173,12 @@ export function CampsMap({
         type: 'circle',
         source: SOURCE,
         paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 5, 15, 9],
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 2.5, 8, 5, 15, 9],
           'circle-color': ['get', 'color'],
           'circle-opacity': 0.95,
           // 어두운 베이스맵에서 각 색이 서로·배경과 분리되도록 진한 테두리.
           'circle-stroke-color': '#0b0f19',
-          'circle-stroke-width': 1.5,
+          'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 8, 1.5],
         },
       });
       map.addLayer({
@@ -168,13 +203,26 @@ export function CampsMap({
 
       loadedRef.current = true;
       map.getSource<maplibregl.GeoJSONSource>(SOURCE)?.setData(toGeoJson(pointsRef.current));
+      map.getSource<maplibregl.GeoJSONSource>(SOURCE_ALL)?.setData(toGeoJson(allPointsRef.current ?? []));
     });
 
-    for (const layer of ['camp-point', 'camp-label']) {
-      map.on('click', layer, (e) => {
-        const id = e.features?.[0]?.properties?.id as string | undefined;
-        if (id) onSelectRef.current(id);
-      });
+    // 클릭 우선순위: 근접 강조층(camp-point/camp-label) 먼저, 없으면 배경층(camps-all-point).
+    // 같은 지점에 양쪽 다 있어도(흔함 — 배경층이 근접층 전체를 포함) 근접층이 이긴다.
+    map.on('click', (e) => {
+      if (!loadedRef.current) return;
+      const near = map.queryRenderedFeatures(e.point, { layers: ['camp-point', 'camp-label'] });
+      const nearId = near[0]?.properties?.id as string | undefined;
+      if (nearId) {
+        onSelectRef.current(nearId);
+        return;
+      }
+      const bg = map.queryRenderedFeatures(e.point, { layers: ['camps-all-point'] });
+      const bgId = bg[0]?.properties?.id as string | undefined;
+      // 근접층 밖의 캠핑장일 수 있으므로 단건 조회 합류 경로로. 안 넘어왔으면 기존 onSelect 로 폴백.
+      if (bgId) (onSelectFromAllRef.current ?? onSelectRef.current)(bgId);
+    });
+
+    for (const layer of ['camp-point', 'camp-label', 'camps-all-point']) {
       map.on('mouseenter', layer, () => void (map.getCanvas().style.cursor = 'pointer'));
       map.on('mouseleave', layer, () => void (map.getCanvas().style.cursor = ''));
     }
@@ -236,6 +284,15 @@ export function CampsMap({
       .getSource<maplibregl.GeoJSONSource>(SOURCE)
       ?.setData(points.length ? toGeoJson(points) : EMPTY);
   }, [points]);
+
+  /* 전국 배경층 갱신. 인덱스가 로딩 중엔 allPoints 가 null 이라 빈 컬렉션(로딩 전엔 근접층만 보임). */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loadedRef.current) return;
+    map
+      .getSource<maplibregl.GeoJSONSource>(SOURCE_ALL)
+      ?.setData(allPoints?.length ? toGeoJson(allPoints) : EMPTY);
+  }, [allPoints]);
 
   /* 중심 이동 + (실제 위치일 때만) 파란 '내 위치' 점.
      폴백(서울)일 땐 점을 찍지 않는다 — 서울을 '내 위치'인 척하지 않기 위해서다(정직성). */

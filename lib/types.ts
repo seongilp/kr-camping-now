@@ -19,13 +19,18 @@ export interface MapBounds {
   maxLon: number;
 }
 
-/** 커맨드 팔레트 이름검색용 경량 인덱스 항목(전량, 검색·지도이동에 필요한 최소 필드). */
+/**
+ * 커맨드 팔레트 이름검색 + 전국 배경 지도용 경량 인덱스 항목(전량, 검색·지도이동에 필요한 최소 필드).
+ * color 는 대표 업종 색(#hex, 7자) — 지도가 업종별로 다시 계산하지 않고 그대로 칠하기만 하도록
+ * 서버에서 미리 넣어 준다(facets.ts indutyColorFor 와 규칙 동일). 페이로드 증가는 항목당 7바이트뿐.
+ */
 export interface CampIndexItem {
   id: string;
   name: string;
   region: string | null;
   lat: number;
   lon: number;
+  color: string;
 }
 
 /**
