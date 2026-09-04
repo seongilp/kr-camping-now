@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   EMPTY_FILTERS,
   INDUTY_COLOR,
+  OTHER_INDUTY_COLOR,
   hasAnyFilter,
   indutyColorFor,
   matchesFilters,
@@ -102,7 +103,9 @@ describe('primaryInduty — 대표 업종 우선순위(글램핑>카라반>오�
   });
   it('업종 없으면 null → 중립색', () => {
     assert.equal(primaryInduty([]), null);
-    assert.equal(indutyColorFor([]), INDUTY_COLOR.general);
+    // indutyColorFor([]) 는 대표 업종이 없을 때의 중립 슬레이트(OTHER_INDUTY_COLOR).
+    // general(일반야영)은 이제 초록이라 이 값과 다르다 — 둘을 혼동하지 말 것.
+    assert.equal(indutyColorFor([]), OTHER_INDUTY_COLOR);
   });
   it('indutyColorFor 는 대표 업종 색을 준다', () => {
     assert.equal(indutyColorFor(['일반야영장', '글램핑']), INDUTY_COLOR.glamping);

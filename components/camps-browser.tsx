@@ -353,6 +353,12 @@ export function CampsBrowser() {
                 setFilters((f) => ({ ...f, induty: f.induty === o.key ? null : o.key }))
               }
             >
+              {/* 업종별 색 점: 활성/비활성 상관없이 항상 표시해 칩 색 범례 역할을 겸한다 */}
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ backgroundColor: INDUTY_COLOR[o.key] }}
+                aria-hidden
+              />
               {o.label}
               {counts && <Count>{indutyCount(o.key)}</Count>}
             </Chip>
