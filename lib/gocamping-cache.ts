@@ -15,6 +15,7 @@
 
 import { fetchCamps, fetchImages } from './gocamping-api';
 import { normalize, type Camp, type CampRaw } from './camps';
+import { isExcludedCamp } from './excluded-camps';
 import { msUntilKstMidnight, todayYmdKst } from './kst';
 
 /** 전량 카탈로그(정규화 완료). */
@@ -35,9 +36,11 @@ const catalogInflight = new Map<string, Promise<Catalog>>();
 
 /** 원본 배열 → 정규화 Catalog. 순수 조립(테스트 가능). 좌표 없는 항목을 세어 둔다. */
 export function buildCatalog(raws: CampRaw[]): Catalog {
+  // 실제 야영장이 아닌 업체(캠핑카 대여·아카데미 등) 명시 제외. lib/excluded-camps.ts 참고.
+  const filtered = raws.filter((r) => !isExcludedCamp(r.contentId?.trim() ?? ''));
   const camps: Camp[] = [];
   let noCoords = 0;
-  for (const r of raws) {
+  for (const r of filtered) {
     const c = normalize(r);
     if (c) camps.push(c);
     else noCoords += 1; // 좌표 결측 또는 한국 밖(=지도에 못 찍음)
